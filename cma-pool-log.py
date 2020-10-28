@@ -80,7 +80,16 @@ class Pool:
                                 format(buf.size))
 
     def _compact_buffer(self, buf):
-        pass
+        prev_offset = 0
+
+        for other_buf in self.offset_list:
+            if other_buf.offset >= buf.offset:
+                break
+
+            prev_offset = other_buf.offset + other_buf.size
+
+        if prev_offset < buf.offset:
+            buf.offset = prev_offset
 
     def _buf_destroy(self, timestamp, buf_id, args):
         assert(args is None)
