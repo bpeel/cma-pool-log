@@ -2,6 +2,15 @@
 
 import re
 import sys
+import collections
+
+
+LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
+                     r'([0-9a-f]{8,16})(?: +(.*))?')
+
+
+Command = collections.namedtuple('Command',
+                                 ['timestamp', 'cmd', 'buf_id', 'args'])
 
 
 class Buffer:
@@ -13,8 +22,6 @@ class Buffer:
 
 
 class Pool:
-    LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
-                         r'([0-9a-f]{8,16})(?: +(.*))?')
     SIZE = 128 * 1024 * 1024
 
     def __init__(self, compact=False):
@@ -23,17 +30,9 @@ class Pool:
         self.offset_list = []
         self.compact = compact
 
-    def process_line(self, line):
-        md = Pool.LINE_RE.match(line)
-        if md is None:
-            return
+    def process_command(self, command):
 
-        timestamp = int(md.group(1)) * 1_000_000 + int(md.group(2))
-        cmd = md.group(3)
-        buf_id = int(md.group(4), 16)
-        args = md.group(5)
-
-        Pool.COMMANDS[cmd](self, timestamp, buf_id, args)
+        Pool.COMMANDS[command.cmd](self, command)
 
     def _page_out_lru_buffer(self):
         for pos in range(len(self.mru_list) - 1, -1, -1):
@@ -91,47 +90,46 @@ class Pool:
         if prev_offset < buf.offset:
             buf.offset = prev_offset
 
-    def _buf_destroy(self, timestamp, buf_id, args):
-        assert(args is None)
+    def _buf_destroy(self, command):
+        assert(command.args is None)
 
-        buf = self.buffers[buf_id]
+        buf = self.buffers[command.buf_id]
 
         if buf.offset is not None:
             self.mru_list.remove(buf)
             self.offset_list.remove(buf)
 
-        del self.buffers[buf_id]
+        del self.buffers[command.buf_id]
 
-    def _buf_add_usecnt(self, timestamp, buf_id, args):
-        assert(args is None)
+    def _buf_add_usecnt(self, command):
+        assert(command.args is None)
 
-        buf = self.buffers[buf_id]
+        buf = self.buffers[command.buf_id]
         assert(not buf.in_use)
         buf.in_use = True
 
-    def _buf_remove_usecnt(self, timestamp, buf_id, args):
-        assert(args is None)
+    def _buf_remove_usecnt(self, command):
+        assert(command.args is None)
 
-        buf = self.buffers[buf_id]
+        buf = self.buffers[command.buf_id]
         assert(buf.in_use)
         buf.in_use = False
 
         if self.compact:
             self._compact_buffer(buf)
 
-    def _buf_create(self, timestamp, buf_id, args):
-        assert(buf_id not in self.buffers)
+    def _buf_create(self, command):
+        assert(command.buf_id not in self.buffers)
 
-        arg_parts = args.split(' ')
-        buf = Buffer(int(arg_parts[0]), len(arg_parts) > 1)
-        self.buffers[buf_id] = buf
+        buf = Buffer(int(command.args[0]), len(command.args) > 1)
+        self.buffers[command.buf_id] = buf
 
         self._page_in_buffer(buf)
 
-    def _buf_use(self, timestamp, buf_id, args):
-        assert(args is None)
+    def _buf_use(self, command):
+        assert(command.args is None)
 
-        buf = self.buffers[buf_id]
+        buf = self.buffers[command.buf_id]
         self._page_in_buffer(buf)
 
         assert(buf.offset is not None)
@@ -152,7 +150,19 @@ def main():
     pool = Pool()
 
     for line in sys.stdin:
-        pool.process_line(line)
+        md = LINE_RE.match(line)
+        if md is None:
+            continue
+
+        timestamp = int(md.group(1)) * 1_000_000 + int(md.group(2))
+        cmd = md.group(3)
+        buf_id = int(md.group(4), 16)
+        args = md.group(5)
+
+        if args is not None:
+            args = args.split(' ')
+
+        pool.process_command(Command(timestamp, cmd, buf_id, args))
 
 
 if __name__ == '__main__':
