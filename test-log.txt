@@ -1,0 +1,11 @@
+[    0.999999] @@@ create cccccccc 33554432
+[    1.999999] @@@ create dddddddd 33554432
+[    2.999999] @@@ create eeeeeeee 33554432
+[    3.999999] @@@ destroy dddddddd
+[    4.999999] @@@ add_usecnt eeeeeeee
+[    5.999999] @@@ remove_usecnt eeeeeeee
+[    6.999999] @@@ create ffffffff 33554432
+[    7.999999] @@@ create 00000000 33554432
+[    8.999999] @@@ use cccccccc
+[    9.999999] @@@ create 11111111 16777216
+[   10.999999] @@@ add_usecnt 11111111
