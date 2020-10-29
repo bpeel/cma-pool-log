@@ -38,9 +38,9 @@ class Pool:
         self.mru_list = []
         self.offset_list = []
         self.compact = compact
+        self.overflow = 0
 
     def process_command(self, command):
-
         Pool.COMMANDS[command.cmd](self, command)
 
     def _page_out_lru_buffer(self):
@@ -53,6 +53,7 @@ class Pool:
             self.offset_list.remove(buf)
             del self.mru_list[pos]
             buf.offset = None
+            self.overflow += buf.size
 
             return True
 
@@ -87,6 +88,8 @@ class Pool:
                 raise Exception("Couldn’t make space for buffer of size {}".
                                 format(buf.size))
 
+        self.overflow -= buf.size
+
     def _compact_buffer(self, buf):
         prev_offset = 0
 
@@ -104,7 +107,9 @@ class Pool:
 
         buf = self.buffers[command.buf_id]
 
-        if buf.offset is not None:
+        if buf.offset is None:
+            self.overflow -= buf.size
+        else:
             self.mru_list.remove(buf)
             self.offset_list.remove(buf)
 
@@ -132,6 +137,7 @@ class Pool:
 
         buf = Buffer(int(command.args[0]), len(command.args) > 1)
         self.buffers[command.buf_id] = buf
+        self.overflow += buf.size
 
         self._page_in_buffer(buf)
 
@@ -233,6 +239,18 @@ def draw_pool(cr, pool, width, height):
                      buf.size * pool_width / Pool.SIZE,
                      pool_height * 8 / 10)
         cr.fill()
+
+    pool_y += side_border + pool_height
+
+    pattern = cairo.LinearGradient(pool_x, pool_y, pool_x + pool_width, pool_y)
+    pattern.add_color_stop_rgba(0.0, 1.0, 0.666, 0.666, 1.0)
+    pattern.add_color_stop_rgba(1.0, 1.0, 0.0, 0.0, 1.0)
+
+    cr.rectangle(pool_x, pool_y,
+                 pool.overflow * pool_width / Pool.SIZE,
+                 pool_height)
+    cr.set_source(pattern)
+    cr.fill()
 
 
 def draw_frame(cr, pool_non_compact, pool_compact):
