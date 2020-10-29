@@ -74,7 +74,7 @@ class Pool:
                 self.mru_list.insert(0, buf)
                 return True
 
-            last_offset = other_buf.offset + buf.size
+            last_offset = other_buf.offset + other_buf.size
 
         if last_offset + buf.size <= Pool.SIZE:
             buf.offset = last_offset
