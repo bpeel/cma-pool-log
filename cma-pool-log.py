@@ -258,6 +258,15 @@ def draw_frame(cr, pool_non_compact, pool_compact):
     cr.paint()
 
     draw_pool(cr, pool_non_compact, Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+
+    cr.save()
+    cr.set_source_rgb(0, 0, 0)
+    cr.set_line_width(Video.IMAGE_HEIGHT / 200)
+    cr.move_to(0, Video.IMAGE_HEIGHT / 2)
+    cr.rel_line_to(Video.IMAGE_WIDTH, 0)
+    cr.stroke()
+    cr.restore()
+
     cr.save()
     cr.translate(0, Video.IMAGE_HEIGHT // 2)
     draw_pool(cr, pool_compact, Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
