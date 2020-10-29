@@ -316,7 +316,9 @@ def draw_pool(cr, name, pool, width, height):
     cr.fill()
 
 
-def draw_frame(cr, pool_non_compact, pool_compact):
+def draw_frame(video, pool_non_compact, pool_compact):
+    cr = video.begin_frame()
+
     set_source_color(cr, '429bdb')
     cr.paint()
 
@@ -342,6 +344,8 @@ def draw_frame(cr, pool_non_compact, pool_compact):
               pool_compact,
               Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
     cr.restore()
+
+    video.end_frame()
 
 
 def main():
@@ -369,9 +373,7 @@ def main():
         timestamp -= first_timestamp
 
         if video.timestamp() < timestamp:
-            cr = video.begin_frame()
-            draw_frame(cr, pool_non_compact, pool_compact)
-            video.end_frame()
+            draw_frame(video, pool_non_compact, pool_compact)
 
             while video.timestamp() < timestamp:
                 video.duplicate_frame()
@@ -379,6 +381,10 @@ def main():
         command = Command(timestamp, cmd, buf_id, args)
         pool_non_compact.process_command(command)
         pool_compact.process_command(command)
+
+    draw_frame(video, pool_non_compact, pool_compact)
+    for _ in range(Video.FRAME_RATE - 1):
+        video.duplicate_frame()
 
     video.finish()
 
