@@ -250,6 +250,7 @@ def main():
     pool_non_compact = Pool(compact=False)
     pool_compact = Pool(compact=True)
     video = Video('cma-pool-log.webm')
+    first_timestamp = None
 
     for line in sys.stdin:
         md = LINE_RE.match(line)
@@ -263,6 +264,11 @@ def main():
 
         if args is not None:
             args = args.split(' ')
+
+        if first_timestamp is None:
+            first_timestamp = timestamp - 1_000_000
+
+        timestamp -= first_timestamp
 
         if video.timestamp() < timestamp:
             cr = video.begin_frame()
