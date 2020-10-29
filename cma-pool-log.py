@@ -12,10 +12,12 @@ gi.require_version('PangoCairo', '1.0')
 from gi.repository import PangoCairo
 import cairo
 import subprocess
+import math
 
 
 LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
                      r'([0-9a-f]{8,16})(?: +(.*))?')
+POOL_COLOR = 'e9c6afff'
 
 
 Command = collections.namedtuple('Command',
@@ -215,16 +217,35 @@ def set_source_color(cr, color):
         cr.set_source_rgb(*parts)
 
 
-def draw_pool(cr, pool, width, height):
+def draw_label(cr, pool_x, pool_y, pool_height, label):
+    extents = cr.text_extents(label)
+
+    cr.save()
+    cr.move_to(pool_x - extents.height,
+               pool_y + pool_height // 2 + extents.width // 2)
+    cr.rotate(-math.pi / 2.0)
+    set_source_color(cr, POOL_COLOR)
+    cr.show_text(label)
+    cr.restore()
+
+
+def draw_pool(cr, name, pool, width, height):
     side_border = width // 30
     pool_width = width - side_border * 2
     pool_height = (height - side_border * 3) // 2
     pool_x = side_border
     pool_y = side_border
 
+    cr.set_source_rgb(0, 0, 0)
+    cr.set_font_size(side_border / 2)
+    cr.move_to(side_border, side_border * 5 / 8)
+    cr.show_text(name)
+
     cr.rectangle(pool_x, pool_y, pool_width, pool_height)
-    set_source_color(cr, 'e9c6afff')
+    set_source_color(cr, POOL_COLOR)
     cr.fill()
+
+    draw_label(cr, pool_x, pool_y, pool_height, "Pool")
 
     for buf in pool.offset_list:
         if buf.unmoveable:
@@ -242,6 +263,8 @@ def draw_pool(cr, pool, width, height):
 
     pool_y += side_border + pool_height
 
+    draw_label(cr, pool_x, pool_y, pool_height, "Overflow")
+
     pattern = cairo.LinearGradient(pool_x, pool_y, pool_x + pool_width, pool_y)
     pattern.add_color_stop_rgba(0.0, 1.0, 0.666, 0.666, 1.0)
     pattern.add_color_stop_rgba(1.0, 1.0, 0.0, 0.0, 1.0)
@@ -257,7 +280,10 @@ def draw_frame(cr, pool_non_compact, pool_compact):
     set_source_color(cr, '429bdb')
     cr.paint()
 
-    draw_pool(cr, pool_non_compact, Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+    draw_pool(cr,
+              "No compaction",
+              pool_non_compact,
+              Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
 
     cr.save()
     cr.set_source_rgb(0, 0, 0)
@@ -269,7 +295,10 @@ def draw_frame(cr, pool_non_compact, pool_compact):
 
     cr.save()
     cr.translate(0, Video.IMAGE_HEIGHT // 2)
-    draw_pool(cr, pool_compact, Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+    draw_pool(cr,
+              "With compaction",
+              pool_compact,
+              Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
     cr.restore()
 
 
