@@ -3,6 +3,15 @@
 import re
 import sys
 import collections
+import gi
+gi.require_version('Rsvg', '2.0')
+from gi.repository import Rsvg
+gi.require_version('Pango', '1.0')
+from gi.repository import Pango
+gi.require_version('PangoCairo', '1.0')
+from gi.repository import PangoCairo
+import cairo
+import subprocess
 
 
 LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
@@ -146,8 +155,101 @@ class Pool:
     }
 
 
+class Video:
+    IMAGE_WIDTH = 1280
+    IMAGE_HEIGHT = 720
+    FRAME_RATE = 30
+
+    ARGS = ['-f', 'rawvideo',
+            '-pixel_format', 'bgra',
+            '-video_size', '{}x{}'.format(IMAGE_WIDTH,
+                                          IMAGE_HEIGHT),
+            '-framerate', str(FRAME_RATE),
+            '-i', '-',
+            '-c:v', 'libvpx',
+            '-b:v', '3M',
+            '-y',
+            '-vf', 'format=yuv420p']
+
+    def __init__(self, filename):
+        self.out = subprocess.Popen(['ffmpeg'] + Video.ARGS + [filename],
+                                    stdin = subprocess.PIPE)
+        self.surface = cairo.ImageSurface(cairo.FORMAT_RGB24,
+                                          Video.IMAGE_WIDTH,
+                                          Video.IMAGE_HEIGHT)
+        self.cr = cairo.Context(self.surface)
+        self.n_frames = 0
+
+    def begin_frame(self):
+        return self.cr
+
+    def duplicate_frame(self):
+        self.out.stdin.write(self.surface.get_data())
+        self.n_frames += 1
+
+    def end_frame(self):
+        self.surface.flush()
+        self.duplicate_frame()
+
+    def finish(self):
+        self.out.stdin.close()
+        if self.out.wait() != 0:
+            raise Exception("ffmpeg failed")
+
+    def timestamp(self):
+        return self.n_frames * 1_000_000 // Video.FRAME_RATE
+
+
+def set_source_color(cr, color):
+    parts = [int(x.group(0), 16) / 255 for x in re.finditer(r'..', color)]
+
+    if len(parts) > 3:
+        cr.set_source_rgba(*parts)
+    else:
+        cr.set_source_rgb(*parts)
+
+
+def draw_pool(cr, pool, width, height):
+    side_border = width // 30
+    pool_width = width - side_border * 2
+    pool_height = (height - side_border * 3) // 2
+    pool_x = side_border
+    pool_y = side_border
+
+    cr.rectangle(pool_x, pool_y, pool_width, pool_height)
+    set_source_color(cr, 'e9c6afff')
+    cr.fill()
+
+    for buf in pool.offset_list:
+        if buf.unmoveable:
+            set_source_color(cr, '2b0000ff')
+        elif buf.in_use:
+            set_source_color(cr, '800000ff')
+        else:
+            set_source_color(cr, 'ffd42aff')
+
+        cr.rectangle(pool_x + buf.offset * pool_width / Pool.SIZE,
+                     pool_y + pool_height / 10,
+                     buf.size * pool_width / Pool.SIZE,
+                     pool_height * 8 / 10)
+        cr.fill()
+
+
+def draw_frame(cr, pool_non_compact, pool_compact):
+    set_source_color(cr, '429bdb')
+    cr.paint()
+
+    draw_pool(cr, pool_non_compact, Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+    cr.save()
+    cr.translate(0, Video.IMAGE_HEIGHT // 2)
+    draw_pool(cr, pool_compact, Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+    cr.restore()
+
+
 def main():
-    pool = Pool()
+    pool_non_compact = Pool(compact=False)
+    pool_compact = Pool(compact=True)
+    video = Video('cma-pool-log.webm')
 
     for line in sys.stdin:
         md = LINE_RE.match(line)
@@ -162,7 +264,19 @@ def main():
         if args is not None:
             args = args.split(' ')
 
-        pool.process_command(Command(timestamp, cmd, buf_id, args))
+        if video.timestamp() < timestamp:
+            cr = video.begin_frame()
+            draw_frame(cr, pool_non_compact, pool_compact)
+            video.end_frame()
+
+            while video.timestamp() < timestamp:
+                video.duplicate_frame()
+
+        command = Command(timestamp, cmd, buf_id, args)
+        pool_non_compact.process_command(command)
+        pool_compact.process_command(command)
+
+    video.finish()
 
 
 if __name__ == '__main__':
