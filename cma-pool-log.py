@@ -18,6 +18,9 @@ import math
 LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
                      r'([0-9a-f]{8,16})(?: +(.*))?')
 POOL_COLOR = 'e9c6afff'
+UNMOVEABLE_COLOR = '2b0000ff'
+IN_USE_COLOR = '800000ff'
+BUFFER_COLOR = 'ffd42aff'
 
 
 Command = collections.namedtuple('Command',
@@ -217,6 +220,43 @@ def set_source_color(cr, color):
         cr.set_source_rgb(*parts)
 
 
+def draw_legend(cr):
+    colors = (('Unmoveable', UNMOVEABLE_COLOR),
+              ('In-use', IN_USE_COLOR),
+              ('Buffer', BUFFER_COLOR))
+    cr.save()
+    cr.set_font_size(Video.IMAGE_WIDTH / 70)
+    widths = [cr.text_extents(color[0]).width for color in colors]
+    gap = cr.text_extents("w").width
+    box_width = gap * 3
+    box_height = gap
+    total_width = ((len(widths) + 1) * gap +
+                   len(widths) * (box_width + gap / 2) +
+                   sum(widths))
+    total_height = box_height + gap * 2
+    line_width = Video.IMAGE_HEIGHT / 200
+    x = Video.IMAGE_WIDTH - total_width - line_width / 2
+    y = Video.IMAGE_HEIGHT - total_height - line_width / 2
+
+    cr.rectangle(x, y, total_width, total_height)
+    cr.set_line_width(line_width)
+    cr.set_source_rgb(0, 0, 0)
+    cr.stroke()
+
+    for label, color in colors:
+        x += gap
+        set_source_color(cr, color)
+        cr.rectangle(x, y + gap, box_width, box_height)
+        cr.fill()
+        x += box_width + gap / 2
+        extents = cr.text_extents(label)
+        cr.move_to(x, y + total_height / 2 + extents.height / 2)
+        cr.show_text(label)
+        x += extents.width
+
+    cr.restore()
+
+
 def draw_label(cr, pool_x, pool_y, pool_height, label):
     extents = cr.text_extents(label)
 
@@ -249,11 +289,11 @@ def draw_pool(cr, name, pool, width, height):
 
     for buf in pool.offset_list:
         if buf.unmoveable:
-            set_source_color(cr, '2b0000ff')
+            set_source_color(cr, UNMOVEABLE_COLOR)
         elif buf.in_use:
-            set_source_color(cr, '800000ff')
+            set_source_color(cr, IN_USE_COLOR)
         else:
-            set_source_color(cr, 'ffd42aff')
+            set_source_color(cr, BUFFER_COLOR)
 
         cr.rectangle(pool_x + buf.offset * pool_width / Pool.SIZE,
                      pool_y + pool_height / 10,
@@ -280,11 +320,6 @@ def draw_frame(cr, pool_non_compact, pool_compact):
     set_source_color(cr, '429bdb')
     cr.paint()
 
-    draw_pool(cr,
-              "No compaction",
-              pool_non_compact,
-              Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
-
     cr.save()
     cr.set_source_rgb(0, 0, 0)
     cr.set_line_width(Video.IMAGE_HEIGHT / 200)
@@ -292,6 +327,13 @@ def draw_frame(cr, pool_non_compact, pool_compact):
     cr.rel_line_to(Video.IMAGE_WIDTH, 0)
     cr.stroke()
     cr.restore()
+
+    draw_legend(cr)
+
+    draw_pool(cr,
+              "No compaction",
+              pool_non_compact,
+              Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
 
     cr.save()
     cr.translate(0, Video.IMAGE_HEIGHT // 2)
