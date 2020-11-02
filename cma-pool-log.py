@@ -49,6 +49,12 @@ class Pool:
     def process_command(self, command):
         Pool.COMMANDS[command.cmd](self, command)
 
+    def _remove_buffer_from_pool(self, buf):
+        self.offset_list.remove(buf)
+        self.mru_list.remove(buf)
+        buf.offset = None
+        self.overflow += buf.size
+
     def _page_out_lru_buffer(self):
         for pos in range(len(self.mru_list) - 1, -1, -1):
             buf = self.mru_list[pos]
@@ -56,31 +62,40 @@ class Pool:
             if buf.in_use or buf.unmoveable:
                 continue
 
-            self.offset_list.remove(buf)
-            del self.mru_list[pos]
-            buf.offset = None
-            self.overflow += buf.size
+            self._remove_buffer_from_pool(buf)
 
             return True
 
         return False
+
+    def _purge_userspace_cache(self):
+        i = 0
+        while i < len(self.offset_list):
+            buf = self.offset_list[i]
+
+            if buf.madv == 'dontneed' and not buf.in_use and not buf.unmoveable:
+                self._remove_buffer_from_pool(buf)
+            else:
+                i += 1
+
+    def _insert_buffer_at(self, offset, offset_list_pos, buf):
+        buf.offset = offset
+        self.offset_list.insert(offset_list_pos, buf)
+        self.mru_list.insert(0, buf)
+        self.overflow -= buf.size
 
     def _insert_buffer(self, buf):
         last_offset = 0
 
         for pos, other_buf in enumerate(self.offset_list):
             if other_buf.offset - last_offset >= buf.size:
-                buf.offset = last_offset
-                self.offset_list.insert(pos, buf)
-                self.mru_list.insert(0, buf)
+                self._insert_buffer_at(last_offset, pos, buf)
                 return True
 
             last_offset = other_buf.offset + other_buf.size
 
         if last_offset + buf.size <= Pool.SIZE:
-            buf.offset = last_offset
-            self.offset_list.append(buf)
-            self.mru_list.insert(0, buf)
+            self._insert_buffer_at(last_offset, len(self.offset_list), buf)
             return True
 
         return False
@@ -89,12 +104,19 @@ class Pool:
         if buf.offset is not None:
             return
 
+        # Check if there is already a slot free for the buffer
+        if self._insert_buffer(buf):
+            return
+
+        # Get rid of all of the purgable buffers
+        self._purge_userspace_cache()
+
+        # Try again in a loop while paging out the least recently used
+        # buffer
         while not self._insert_buffer(buf):
             if not self._page_out_lru_buffer():
                 raise Exception("Couldn’t make space for buffer of size {}".
                                 format(buf.size))
-
-        self.overflow -= buf.size
 
     def _compact_buffer(self, buf):
         prev_offset = 0
