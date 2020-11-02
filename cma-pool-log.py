@@ -33,6 +33,7 @@ class Buffer:
         self.unmoveable = unmoveable
         self.offset = None
         self.in_use = False
+        self.madv = 'willneed'
 
 
 class Pool:
@@ -150,6 +151,9 @@ class Pool:
         assert(command.args is None)
 
         buf = self.buffers[command.buf_id]
+
+        assert(buf.madv == 'willneed')
+
         self._page_in_buffer(buf)
 
         assert(buf.offset is not None)
@@ -157,12 +161,16 @@ class Pool:
         self.mru_list.remove(buf)
         self.mru_list.insert(0, buf)
 
+    def _buf_madv(self, command):
+        self.buffers[command.buf_id].madv = command.args[0]
+
     COMMANDS = {
         'destroy' : _buf_destroy,
         'add_usecnt' : _buf_add_usecnt,
         'remove_usecnt' : _buf_remove_usecnt,
         'create' : _buf_create,
         'use' : _buf_use,
+        'madv' : _buf_madv,
     }
 
 
