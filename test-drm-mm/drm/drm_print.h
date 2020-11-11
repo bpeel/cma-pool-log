@@ -2,6 +2,7 @@
 #define DRM_PRINT_H
 
 #include <stdio.h>
+#include <inttypes.h>
 
 struct drm_printer {
         int stub;

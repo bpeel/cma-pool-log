@@ -128,14 +128,14 @@ static void show_leaks(struct drm_mm *mm)
 
 	list_for_each_entry(node, drm_mm_nodes(mm), node_list) {
 		if (!node->stack) {
-			DRM_ERROR("node [%08llx + %08llx]: unknown owner\n",
+			DRM_ERROR("node [%08" PRIx64 " + %08" PRIx64 "]: unknown owner\n",
 				  node->start, node->size);
 			continue;
 		}
 
 		nr_entries = stack_depot_fetch(node->stack, &entries);
 		stack_trace_snprint(buf, BUFSZ, entries, nr_entries, 0);
-		DRM_ERROR("node [%08llx + %08llx]: inserted at\n%s",
+		DRM_ERROR("node [%08" PRIx64 " + %08" PRIx64 "]: inserted at\n%s",
 			  node->start, node->size, buf);
 	}
 
@@ -949,7 +949,7 @@ static u64 drm_mm_dump_hole(struct drm_printer *p, const struct drm_mm_node *ent
 	size = entry->hole_size;
 	if (size) {
 		start = drm_mm_hole_node_start(entry);
-		drm_printf(p, "%#018llx-%#018llx: %llu: free\n",
+		drm_printf(p, "%#018" PRIx64 "-%#018" PRIx64 ": %" PRIu64 ": free\n",
 			   start, start + size, size);
 	}
 
@@ -968,14 +968,14 @@ void drm_mm_print(const struct drm_mm *mm, struct drm_printer *p)
 	total_free += drm_mm_dump_hole(p, &mm->head_node);
 
 	drm_mm_for_each_node(entry, mm) {
-		drm_printf(p, "%#018llx-%#018llx: %llu: used\n", entry->start,
+		drm_printf(p, "%#018" PRIx64 "-%#018" PRIx64 ": %" PRIu64 ": used\n", entry->start,
 			   entry->start + entry->size, entry->size);
 		total_used += entry->size;
 		total_free += drm_mm_dump_hole(p, entry);
 	}
 	total = total_free + total_used;
 
-	drm_printf(p, "total: %llu, used %llu free %llu\n", total,
+	drm_printf(p, "total: %" PRIu64 ", used %" PRIu64 " free %" PRIu64 "\n", total,
 		   total_used, total_free);
 }
 EXPORT_SYMBOL(drm_mm_print);
