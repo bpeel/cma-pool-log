@@ -536,8 +536,8 @@ dump_data(struct data *data)
                "   \"buffers\": [",
                data->overflow);
 
-        list_for_each_entry(buf, &data->all_buffers, all_buffers_head) {
-                if (buf->all_buffers_head.prev != &data->all_buffers)
+        list_for_each_entry(buf, &data->mru_buffers, mru_buffers_head) {
+                if (buf->mru_buffers_head.prev != &data->mru_buffers)
                         fputc(',', stdout);
                 printf("\n"
                        "      { \"name\": %" PRIu32 ", "
@@ -545,19 +545,13 @@ dump_data(struct data *data)
                        "\"unmoveable\": %s, "
                        "\"in_use\": %s, "
                        "\"madv\": \"%s\", "
-                       "\"offset\": ",
+                       "\"offset\": %" PRIu64 " }",
                        buf->name,
                        buf->size,
                        bool_str(buf->unmoveable),
                        bool_str(buf->in_use),
-                       madv_str(buf->madv));
-
-                if (buf->paged_in)
-                        printf("%" PRIu64, buf->mm_node.start);
-                else
-                        fputs("null", stdout);
-
-                fputs(" }", stdout);
+                       madv_str(buf->madv),
+                       buf->mm_node.start);
         }
 
         fputs("\n"
