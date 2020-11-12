@@ -39,7 +39,8 @@ class Buffer:
 class Pool:
     SIZE = 128 * 1024 * 1024
 
-    def __init__(self, compact=False):
+    def __init__(self, name, compact=False):
+        self.name = name
         self.buffers = {}
         self.mru_list = []
         self.offset_list = []
@@ -299,7 +300,7 @@ def draw_label(cr, pool_x, pool_y, pool_height, label):
     cr.restore()
 
 
-def draw_pool(cr, name, pool, width, height):
+def draw_pool(cr, pool, width, height):
     side_border = width // 30
     pool_width = width - side_border * 2
     pool_height = (height - side_border * 3) // 2
@@ -309,7 +310,7 @@ def draw_pool(cr, name, pool, width, height):
     cr.set_source_rgb(0, 0, 0)
     cr.set_font_size(side_border / 2)
     cr.move_to(side_border, side_border * 5 / 8)
-    cr.show_text(name)
+    cr.show_text(pool.name)
 
     cr.rectangle(pool_x, pool_y, pool_width, pool_height)
     set_source_color(cr, POOL_COLOR)
@@ -346,7 +347,7 @@ def draw_pool(cr, name, pool, width, height):
     cr.fill()
 
 
-def draw_frame(video, pool_non_compact, pool_compact):
+def draw_frame(video, pools):
     cr = video.begin_frame()
 
     set_source_color(cr, '429bdb')
@@ -362,25 +363,22 @@ def draw_frame(video, pool_non_compact, pool_compact):
 
     draw_legend(cr)
 
-    draw_pool(cr,
-              "No compaction",
-              pool_non_compact,
-              Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+    for i, pool in enumerate(pools):
+        cr.save()
+        cr.translate(0, Video.IMAGE_HEIGHT // 2 * i)
 
-    cr.save()
-    cr.translate(0, Video.IMAGE_HEIGHT // 2)
-    draw_pool(cr,
-              "With compaction",
-              pool_compact,
-              Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
-    cr.restore()
+        draw_pool(cr,
+                  pool,
+                  Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+
+        cr.restore()
 
     video.end_frame()
 
 
 def main():
-    pool_non_compact = Pool(compact=False)
-    pool_compact = Pool(compact=True)
+    pools = [Pool("No compaction", compact=False),
+             Pool("With compaction", compact=True)]
     video = Video('cma-pool-log.webm')
     first_timestamp = None
 
@@ -403,16 +401,16 @@ def main():
         timestamp -= first_timestamp
 
         if video.timestamp() < timestamp:
-            draw_frame(video, pool_non_compact, pool_compact)
+            draw_frame(video, pools)
 
             while video.timestamp() < timestamp:
                 video.duplicate_frame()
 
         command = Command(timestamp, cmd, buf_id, args)
-        pool_non_compact.process_command(command)
-        pool_compact.process_command(command)
+        for pool in pools:
+            pool.process_command(command)
 
-    draw_frame(video, pool_non_compact, pool_compact)
+    draw_frame(video, pools)
     for _ in range(Video.FRAME_RATE - 1):
         video.duplicate_frame()
 
