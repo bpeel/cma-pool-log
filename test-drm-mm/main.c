@@ -53,6 +53,7 @@ struct data {
         struct list_head mru_buffers;
         struct drm_mm mm;
         int line_num;
+        size_t overflow;
 };
 
 static struct buffer *
@@ -86,20 +87,24 @@ find_buffer_or_error(struct data *data,
 }
 
 static void
-remove_buffer_from_pool(struct buffer *buf)
+remove_buffer_from_pool(struct data *data,
+                        struct buffer *buf)
 {
         drm_mm_remove_node(&buf->mm_node);
         list_del(&buf->mru_buffers_head);
         buf->paged_in = false;
+        data->overflow += buf->size;
 }
 
 static void
-free_buffer(struct buffer *buf)
+free_buffer(struct data *data,
+            struct buffer *buf)
 {
         if (buf->paged_in)
-                remove_buffer_from_pool(buf);
+                remove_buffer_from_pool(data, buf);
 
         list_del(&buf->all_buffers_head);
+        data->overflow -= buf->size;
 
         free(buf);
 }
@@ -112,7 +117,7 @@ free_buffers(struct data *data)
         list_for_each_entry_safe(buf, tmp,
                                  &data->all_buffers,
                                  all_buffers_head) {
-                free_buffer(buf);
+                free_buffer(data, buf);
         }
 }
 
@@ -173,7 +178,7 @@ found:
         }
 
         list_for_each_entry(buffer, &eviction_list, eviction_head) {
-                remove_buffer_from_pool(buffer);
+                remove_buffer_from_pool(data, buffer);
         }
 
         return true;
@@ -191,7 +196,7 @@ userspace_cache_purge(struct data *data)
                 if (buf->madv == MADV_DONTNEED &&
                     !buf->in_use &&
                     !buf->unmoveable)
-                        remove_buffer_from_pool(buf);
+                        remove_buffer_from_pool(data, buf);
         }
 }
 
@@ -214,6 +219,7 @@ insert_buffer_in_cma_pool(struct data *data,
 
         list_add(&buf->mru_buffers_head, &data->mru_buffers);
         buf->paged_in = true;
+        data->overflow -= buf->size;
 
         return true;
 }
@@ -279,7 +285,7 @@ buf_destroy(struct data *data,
         if (buf == NULL)
                 return;
 
-        free_buffer(buf);
+        free_buffer(data, buf);
 }
 
 static void
@@ -375,6 +381,8 @@ buf_create(struct data *data,
         buf->madv = MADV_WILLNEED;
         buf->unmoveable = unmoveable;
         list_add(&buf->all_buffers_head, &data->all_buffers);
+
+        data->overflow += buf_size;
 
         page_in_buffer(data, buf);
 }
@@ -523,13 +531,16 @@ dump_data(struct data *data)
 {
         struct buffer *buf;
 
-        fputs("[", stdout);
+        printf("{\n"
+               "   \"overflow\": %zu,\n"
+               "   \"buffers\": [",
+               data->overflow);
 
         list_for_each_entry(buf, &data->all_buffers, all_buffers_head) {
                 if (buf->all_buffers_head.prev != &data->all_buffers)
                         fputc(',', stdout);
                 printf("\n"
-                       "   { \"name\": %" PRIu32 ", "
+                       "      { \"name\": %" PRIu32 ", "
                        "\"size\": %zu, "
                        "\"unmoveable\": %s, "
                        "\"in_use\": %s, "
@@ -550,7 +561,8 @@ dump_data(struct data *data)
         }
 
         fputs("\n"
-              "]\n",
+              "   ]\n"
+              "}\n",
               stdout);
 
         fflush(stdout);
