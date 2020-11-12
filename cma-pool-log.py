@@ -13,6 +13,7 @@ from gi.repository import PangoCairo
 import cairo
 import subprocess
 import math
+import json
 
 
 LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
@@ -46,6 +47,9 @@ class Pool:
         self.offset_list = []
         self.compact = compact
         self.overflow = 0
+
+    def paged_in_buffers(self):
+        return self.offset_list
 
     def process_command(self, command):
         Pool.COMMANDS[command.cmd](self, command)
@@ -197,6 +201,52 @@ class Pool:
     }
 
 
+class ProcPool:
+    def __init__(self, name):
+        self.name = name
+        self.overflow = 0
+        self.proc = subprocess.Popen(['test-drm-mm/build/test-drm-mm'],
+                                     stdin = subprocess.PIPE,
+                                     stdout = subprocess.PIPE,
+                                     encoding = 'utf-8')
+        self._paged_in_buffers = None
+
+    def _make_buffer(data):
+        buf = Buffer(data['size'], data['unmoveable'])
+        buf.offset = data['offset']
+        buf.in_use = data['in_use']
+        buf.madv = data['madv']
+        return buf
+
+    def paged_in_buffers(self):
+        if self._paged_in_buffers is None:
+            print('dump', file=self.proc.stdin)
+            self.proc.stdin.flush()
+            parts = []
+            for line in self.proc.stdout:
+                parts.append(line)
+                if line.startswith('}'):
+                    break
+            state = json.loads(''.join(parts))
+
+            self.overflow = state['overflow']
+            self._paged_in_buffers = [ProcPool._make_buffer(b)
+                                      for b in state['buffers']]
+
+        return self._paged_in_buffers
+
+    def process_command(self, command):
+        self._paged_in_buffers = None
+
+        print("[{}] @@@ {} {:08x}{}".format(command.timestamp,
+                                            command.cmd,
+                                            command.buf_id,
+                                            ' ' + ' '.join(command.args)
+                                            if command.args
+                                            else ''),
+              file=self.proc.stdin)
+
+
 class Video:
     IMAGE_WIDTH = 1280
     IMAGE_HEIGHT = 720
@@ -318,7 +368,7 @@ def draw_pool(cr, pool, width, height):
 
     draw_label(cr, pool_x, pool_y, pool_height, "Pool")
 
-    for buf in pool.offset_list:
+    for buf in pool.paged_in_buffers():
         if buf.unmoveable:
             set_source_color(cr, UNMOVEABLE_COLOR)
         elif buf.in_use:
