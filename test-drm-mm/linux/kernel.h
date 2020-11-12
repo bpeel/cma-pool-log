@@ -8,7 +8,7 @@
 #define READ_ONCE(src) (src)
 
 #define container_of(ptr, type, member) \
-        ((type *)((ptr) - offsetof(type, member)))
+        ((type *)((char *) (ptr) - offsetof(type, member)))
 
 #define EXPORT_SYMBOL(x)
 
