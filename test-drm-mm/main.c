@@ -5,9 +5,13 @@
 #include <inttypes.h>
 #include <string.h>
 #include <ctype.h>
+#include <assert.h>
 
 /* Limit the amount of CMA memory allocated to 128MB */
 #define VC4_CMA_POOL_SIZE (128 * 1024 * 1024)
+
+#define PAGE_SHIFT 12
+#define PAGE_SIZE (1UL << PAGE_SHIFT)
 
 enum madv {
         MADV_WILLNEED,
@@ -19,6 +23,12 @@ struct buffer {
 
         /* Position in the list of all buffers */
         struct list_head all_buffers_head;
+        /* Position in the MRU list. The buffer will only be in the
+         * list if paged_in is true.
+         */
+        struct list_head mru_buffers_head;
+        /* Temporary list node used for choosing what to evict */
+        struct list_head eviction_head;
 
         /* The address of the buffer object that appeared in the log.
          * We’ll use this as an identifier to find the object again.
@@ -36,6 +46,10 @@ struct buffer {
 
 struct data {
         struct list_head all_buffers;
+        /* Buffers in order of most-recently-used first. Buffers will
+         * only be in this list if they are paged in.
+         */
+        struct list_head mru_buffers;
         struct drm_mm mm;
         int line_num;
 };
@@ -71,10 +85,18 @@ find_buffer_or_error(struct data *data,
 }
 
 static void
+remove_buffer_from_pool(struct buffer *buf)
+{
+        drm_mm_remove_node(&buf->mm_node);
+        list_del(&buf->mru_buffers_head);
+        buf->paged_in = false;
+}
+
+static void
 free_buffer(struct buffer *buf)
 {
         if (buf->paged_in)
-                drm_mm_remove_node(&buf->mm_node);
+                remove_buffer_from_pool(buf);
 
         list_del(&buf->all_buffers_head);
 
@@ -93,10 +115,141 @@ free_buffers(struct data *data)
         }
 }
 
+static bool
+page_out_buffers_for_insertion(struct data *data,
+                               size_t size)
+{
+        struct buffer *buffer, *tmp;
+        struct list_head eviction_list;
+        struct drm_mm_scan scan;
+        int ret;
+
+        drm_mm_scan_init_with_range(&scan,
+                                    &data->mm,
+                                    size,
+                                    PAGE_SIZE,
+                                    0, /* color */
+                                    0, /* start */
+                                    VC4_CMA_POOL_SIZE,
+                                    DRM_MM_INSERT_BEST);
+        INIT_LIST_HEAD(&eviction_list);
+
+        /* Let the drm_mm pick what to evict to make a hole for the
+         * buffer. The buffers are scanned in order of LRU so that it
+         * will hopefully prefer paging out unused buffers first.
+         */
+        list_for_each_entry_safe_reverse(buffer,
+                                         tmp,
+                                         &data->mru_buffers,
+                                         mru_buffers_head) {
+                /* Don’t page out buffers that are in use or unmoveable */
+                if (buffer->in_use || buffer->unmoveable)
+                        continue;
+
+                list_add(&buffer->eviction_head, &eviction_list);
+
+                if (drm_mm_scan_add_block(&scan, &buffer->mm_node))
+                        goto found;
+        }
+
+        /* Nothing found, clean up and bail out! */
+        list_for_each_entry(buffer, &eviction_list, eviction_head) {
+                ret = drm_mm_scan_remove_block(&scan, &buffer->mm_node);
+                BUG_ON(ret);
+        }
+
+        return false;
+
+found:
+        /* drm_mm doesn’t allow any other other operations while
+         * scanning, so we’ll do this in two steps by removing
+         * anything that shouldn’t be evicted from the list and then
+         * paging them all out as the second step.
+         */
+        list_for_each_entry_safe(buffer, tmp, &eviction_list, eviction_head) {
+                if (!drm_mm_scan_remove_block(&scan, &buffer->mm_node))
+                        list_del(&buffer->eviction_head);
+        }
+
+        list_for_each_entry(buffer, &eviction_list, eviction_head) {
+                remove_buffer_from_pool(buffer);
+        }
+
+        return true;
+}
+
 static void
+userspace_cache_purge(struct data *data)
+{
+        struct buffer *buf, *tmp;
+
+        list_for_each_entry_safe(buf,
+                                 tmp,
+                                 &data->mru_buffers,
+                                 mru_buffers_head) {
+                if (buf->madv == MADV_DONTNEED &&
+                    !buf->in_use &&
+                    !buf->unmoveable)
+                        remove_buffer_from_pool(buf);
+        }
+}
+
+static bool
+insert_buffer_in_cma_pool(struct data *data,
+                          struct buffer *buf,
+                          enum drm_mm_insert_mode mode)
+{
+        int ret;
+
+        ret = drm_mm_insert_node_generic(&data->mm,
+                                         &buf->mm_node,
+                                         buf->size,
+                                         PAGE_SIZE,
+                                         0, /* color */
+                                         mode);
+
+        if (ret)
+                return false;
+
+        list_add(&buf->mru_buffers_head, &data->mru_buffers);
+        buf->paged_in = true;
+
+        return true;
+}
+
+static bool
 page_in_buffer(struct data *data,
                struct buffer *buf)
 {
+        /* Check if there is a gap already available */
+        if (insert_buffer_in_cma_pool(data, buf, DRM_MM_INSERT_BEST))
+                return true;
+
+        /*
+         * Not enough CMA memory in the pool, purge the userspace BO
+         * cache and retry.
+         * This is sub-optimal since we purge the whole userspace BO
+         * cache which forces user that want to re-use the BO to
+         * restore its initial content.
+         * Ideally, we should purge entries one by one and retry after
+         * each to see if CMA allocation succeeds. Or even better, try
+         * to find an entry with at least the same size.
+         */
+        userspace_cache_purge(data);
+
+        if (insert_buffer_in_cma_pool(data, buf, DRM_MM_INSERT_BEST))
+                return true;
+
+        /* Try paging out some unused buffers */
+        if (page_out_buffers_for_insertion(data, buf->size) &&
+            insert_buffer_in_cma_pool(data, buf, DRM_MM_INSERT_EVICT))
+                return true;
+
+        fprintf(stderr,
+                "Couldn't find insertion point for buffer of size %zu\n",
+                buf->size);
+
+        return false;
 }
 
 static bool
@@ -236,6 +389,14 @@ buf_use(struct data *data,
         struct buffer *buf = find_buffer_or_error(data, buf_name);
         if (buf == NULL)
                 return;
+
+        if (buf->paged_in) {
+                /* Move the buffer to the head of the MRU list */
+                list_del(&buf->mru_buffers_head);
+                list_add(&buf->mru_buffers_head, &data->mru_buffers);
+        } else {
+                page_in_buffer(data, buf);
+        }
 }
 
 static void
@@ -364,6 +525,7 @@ main(int argc, char **argv)
         struct data data;
 
         INIT_LIST_HEAD(&data.all_buffers);
+        INIT_LIST_HEAD(&data.mru_buffers);
 
         drm_mm_init(&data.mm,
                     0, /* start */
