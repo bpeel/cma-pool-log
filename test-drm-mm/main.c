@@ -439,17 +439,10 @@ buf_madv(struct data *data,
 }
 
 static void
-process_line(struct data *data,
-             const char *line)
+process_command(struct data *data,
+                const char *command_start)
 {
-        static const char command_marker[] = "] @@@ ";
-        const char *marker_pos = strstr(line, command_marker);
-
-        if (marker_pos == NULL)
-                return;
-
-        const char *command_name = marker_pos + (sizeof command_marker) - 1;
-        const char *command_end = strchr(command_name, ' ');
+        const char *command_end = strchr(command_start, ' ');
 
         if (command_end == NULL)
                 return;
@@ -490,8 +483,8 @@ process_line(struct data *data,
         for (int i = 0; commands[i].name; i++) {
                 size_t name_len = strlen(commands[i].name);
 
-                if (name_len == command_end - command_name &&
-                    !memcmp(command_name, commands[i].name, name_len)) {
+                if (name_len == command_end - command_start &&
+                    !memcmp(command_start, commands[i].name, name_len)) {
                         commands[i].func(data,
                                          buf_name,
                                          args + args_offset);
@@ -501,9 +494,94 @@ process_line(struct data *data,
 
         fprintf(stderr,
                 "unknown command %*s on line %i\n",
-                (int) (command_end - command_name),
-                command_name,
+                (int) (command_end - command_start),
+                command_start,
                 data->line_num);
+}
+
+static const char *
+bool_str(bool val)
+{
+        return val ? "true" : "false";
+}
+
+static const char *
+madv_str(enum madv madv)
+{
+        switch (madv) {
+        case MADV_DONTNEED:
+                return "dontneed";
+        case MADV_WILLNEED:
+                return "willneed";
+        }
+
+        return "?";
+}
+
+static void
+dump_data(struct data *data)
+{
+        struct buffer *buf;
+
+        fputs("[", stdout);
+
+        list_for_each_entry(buf, &data->all_buffers, all_buffers_head) {
+                if (buf->all_buffers_head.prev != &data->all_buffers)
+                        fputc(',', stdout);
+                printf("\n"
+                       "   { \"name\": %" PRIu32 ", "
+                       "\"size\": %zu, "
+                       "\"unmoveable\": %s, "
+                       "\"in_use\": %s, "
+                       "\"madv\": \"%s\", "
+                       "\"offset\": ",
+                       buf->name,
+                       buf->size,
+                       bool_str(buf->unmoveable),
+                       bool_str(buf->in_use),
+                       madv_str(buf->madv));
+
+                if (buf->paged_in)
+                        printf("%" PRIu64, buf->mm_node.start);
+                else
+                        fputs("null", stdout);
+
+                fputs(" }", stdout);
+        }
+
+        fputs("\n"
+              "]\n",
+              stdout);
+
+        fflush(stdout);
+}
+
+static void
+process_line(struct data *data,
+             const char *line)
+{
+        static const char command_marker[] = "] @@@ ";
+        const char *marker_pos = strstr(line, command_marker);
+
+        if (marker_pos) {
+                process_command(data, marker_pos + (sizeof command_marker) - 1);
+                return;
+        }
+
+        while (isspace(*line))
+                line++;
+
+        if (strncmp(line, "dump", 4))
+                return;
+
+        line += 4;
+
+        while (*line) {
+                if (!isspace(*(line++)))
+                        return;
+        }
+
+        dump_data(data);
 }
 
 static void
@@ -539,6 +617,8 @@ int
 main(int argc, char **argv)
 {
         struct data data;
+
+        memset(&data, 0, sizeof data);
 
         INIT_LIST_HEAD(&data.all_buffers);
         INIT_LIST_HEAD(&data.mru_buffers);
