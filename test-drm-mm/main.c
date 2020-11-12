@@ -6,6 +6,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
+#include <errno.h>
 
 /* Limit the amount of CMA memory allocated to 128MB */
 #define VC4_CMA_POOL_SIZE (128 * 1024 * 1024)
@@ -519,6 +520,21 @@ process_file(struct data *data,
         }
 }
 
+static void
+process_filename(struct data *data,
+                 const char *filename)
+{
+        FILE *file = fopen(filename, "r");
+
+        if (file == NULL) {
+                fprintf(stderr, "%s: %s\n", filename, strerror(errno));
+                return;
+        }
+
+        process_file(data, file);
+        fclose(file);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -531,7 +547,10 @@ main(int argc, char **argv)
                     0, /* start */
                     VC4_CMA_POOL_SIZE);
 
-        process_file(&data, stdin);
+        if (argc > 1)
+                process_filename(&data, argv[1]);
+        else
+                process_file(&data, stdin);
 
         free_buffers(&data);
 
