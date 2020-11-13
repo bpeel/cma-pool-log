@@ -431,7 +431,8 @@ def draw_frame(video, pools):
 
 def main():
     pools = [Pool("No compaction", compact=False),
-             Pool("With compaction", compact=True)]
+             Pool("With compaction", compact=True),
+             ProcPool("drm_mm")]
     video = Video('cma-pool-log.webm')
     first_timestamp = None
 
