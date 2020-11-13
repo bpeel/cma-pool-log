@@ -398,28 +398,31 @@ def draw_pool(cr, pool, width, height):
 
 
 def draw_frame(video, pools):
+    n_pools = len(pools)
+
     cr = video.begin_frame()
 
     set_source_color(cr, '429bdb')
     cr.paint()
 
-    cr.save()
-    cr.set_source_rgb(0, 0, 0)
-    cr.set_line_width(Video.IMAGE_HEIGHT / 200)
-    cr.move_to(0, Video.IMAGE_HEIGHT / 2)
-    cr.rel_line_to(Video.IMAGE_WIDTH, 0)
-    cr.stroke()
-    cr.restore()
+    for i in range(n_pools - 1):
+        cr.save()
+        cr.set_source_rgb(0, 0, 0)
+        cr.set_line_width(Video.IMAGE_HEIGHT / 200)
+        cr.move_to(0, (i + 1) * Video.IMAGE_HEIGHT / n_pools)
+        cr.rel_line_to(Video.IMAGE_WIDTH, 0)
+        cr.stroke()
+        cr.restore()
 
     draw_legend(cr)
 
     for i, pool in enumerate(pools):
         cr.save()
-        cr.translate(0, Video.IMAGE_HEIGHT // 2 * i)
+        cr.translate(0, Video.IMAGE_HEIGHT * i // n_pools)
 
         draw_pool(cr,
                   pool,
-                  Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // 2)
+                  Video.IMAGE_WIDTH, Video.IMAGE_HEIGHT // n_pools)
 
         cr.restore()
 
