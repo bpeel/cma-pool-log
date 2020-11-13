@@ -14,6 +14,7 @@ import cairo
 import subprocess
 import math
 import json
+import os.path
 
 
 LINE_RE = re.compile(r'^\[ *([0-9]+)\.([0-9]{6}) *] +@@@ +([a-z_]+) '
@@ -22,6 +23,7 @@ POOL_COLOR = 'e9c6afff'
 UNMOVEABLE_COLOR = '2b0000ff'
 IN_USE_COLOR = '800000ff'
 BUFFER_COLOR = 'ffd42aff'
+TEST_DRM_MM_EXECUTABLE = 'test-drm-mm/build/test-drm-mm'
 
 
 Command = collections.namedtuple('Command',
@@ -205,7 +207,7 @@ class ProcPool:
     def __init__(self, name):
         self.name = name
         self.overflow = 0
-        self.proc = subprocess.Popen(['test-drm-mm/build/test-drm-mm'],
+        self.proc = subprocess.Popen([TEST_DRM_MM_EXECUTABLE],
                                      stdin = subprocess.PIPE,
                                      stdout = subprocess.PIPE,
                                      encoding = 'utf-8')
@@ -429,7 +431,18 @@ def draw_frame(video, pools):
     video.end_frame()
 
 
+def ensure_test_drm_mm():
+    if os.path.exists(TEST_DRM_MM_EXECUTABLE):
+        return
+
+    subprocess.run(['bash', '-c',
+                    'cd test-drm-mm && meson build && ninja -C build'],
+                   check=True)
+
+
 def main():
+    ensure_test_drm_mm()
+
     pools = [Pool("No compaction", compact=False),
              Pool("With compaction", compact=True),
              ProcPool("drm_mm")]
